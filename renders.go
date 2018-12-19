@@ -16,8 +16,8 @@ var (
 	basePath            string
 	exts                []string
 	lock                sync.Mutex
-	re_defineTag        = regexp.MustCompile("{{ ?define \"([^\"]*)\" ?\"?([a-zA-Z0-9]*)?\"? ?}}")
-	re_templateTag      = regexp.MustCompile("{{ ?template \"([^\"]*)\" ?([^ ]*)? ?}}")
+	reDefineTag         = regexp.MustCompile("{{ ?define \"([^\"]*)\" ?\"?([a-zA-Z0-9]*)?\"? ?}}")
+	reTemplateTag       = regexp.MustCompile("{{ ?template \"([^\"]*)\" ?([^ ]*)? ?}}")
 )
 
 type namedTemplate struct {
@@ -54,63 +54,60 @@ func loadTemplates(funcMap template.FuncMap) (map[string]*template.Template, err
 
 		ext := filepath.Ext(r)
 
-		for _, extension := range exts {
-			if ext != extension {
-				continue
-			}
-			if err := add(path); err != nil {
-				panic(err)
-			}
-
-			// Now we find all regular template definitions and check for the most recent definition
-			for _, t := range regularTemplateDefs {
-				found := false
-				defineIdx := 0
-				// From the beginning (which should) most specifc we look for definitions
-				for _, nt := range cache {
-					nt.Src = re_defineTag.ReplaceAllStringFunc(nt.Src, func(raw string) string {
-						parsed := re_defineTag.FindStringSubmatch(raw)
-						name := parsed[1]
-						if name != t {
-							return raw
-						}
-						// Don't touch the first definition
-						if !found {
-							found = true
-							return raw
-						}
-
-						defineIdx += 1
-
-						return fmt.Sprintf("{{ define \"%s_invalidated_#%d\" }}", name, defineIdx)
-					})
-				}
-			}
-
-			var (
-				baseTmpl *template.Template
-				i        int
-			)
-
-			for _, nt := range cache {
-				var currentTmpl *template.Template
-				if i == 0 {
-					baseTmpl = template.New(nt.Name)
-					currentTmpl = baseTmpl
-				} else {
-					currentTmpl = baseTmpl.New(nt.Name)
-				}
-
-				template.Must(currentTmpl.Funcs(funcMap).Parse(nt.Src))
-				i++
-			}
-			tname := generateTemplateName(basePath, path)
-			templates[tname] = baseTmpl
-
-			// Make sure we empty the cache between runs
-			cache = cache[0:0]
-			break
+		if !inExtensions(ext) {
+			return nil
 		}
+		if err := add(path); err != nil {
+			panic(err)
+		}
+
+		// Now we find all regular template definitions and check for the most recent definition
+		for _, t := range regularTemplateDefs {
+			found := false
+			defineIdx := 0
+			// From the beginning (which should) most specfic we look for definitions
+			for _, nt := range cache {
+				nt.Src = reDefineTag.ReplaceAllStringFunc(nt.Src, func(raw string) string {
+					parsed := reDefineTag.FindStringSubmatch(raw)
+					name := parsed[1]
+					if name != t {
+						return raw
+					}
+					// Don't touch the first definition
+					if !found {
+						found = true
+						return raw
+					}
+
+					defineIdx++
+
+					return fmt.Sprintf("{{ define \"%s_invalidated_#%d\" }}", name, defineIdx)
+				})
+			}
+		}
+
+		var (
+			baseTmpl *template.Template
+			i        int
+		)
+
+		for _, nt := range cache {
+			var currentTmpl *template.Template
+			if i == 0 {
+				baseTmpl = template.New(nt.Name)
+				currentTmpl = baseTmpl
+			} else {
+				currentTmpl = baseTmpl.New(nt.Name)
+			}
+
+			template.Must(currentTmpl.Funcs(funcMap).Parse(nt.Src))
+			i++
+		}
+		tname := generateTemplateName(basePath, path)
+		templates[tname] = baseTmpl
+
+		// Make sure we empty the cache between runs
+		cache = cache[0:0]
 		return nil
 	})
 
@@ -146,8 +143,8 @@ func add(path string) error {
 	cache = append(cache, nt)
 
 	// Check for any template block
-	for _, raw := range re_templateTag.FindAllString(nt.Src, -1) {
-		parsed := re_templateTag.FindStringSubmatch(raw)
+	for _, raw := range reTemplateTag.FindAllString(nt.Src, -1) {
+		parsed := reTemplateTag.FindStringSubmatch(raw)
 		templatePath := parsed[1]
 		ext := filepath.Ext(templatePath)
 		if !strings.Contains(templatePath, ext) {

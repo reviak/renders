@@ -33,6 +33,7 @@ const (
 
 // Provides a temporary buffer to execute templates into and catch errors.
 var bufpool *bpool.BufferPool
+// key is full path with an extension, e.g layouts/layout.html
 var templates map[string]*template.Template
 
 // Options is a struct for specifying configuration options for the render.Renderer middleware
@@ -226,7 +227,6 @@ func (r *renderer) PlainText(status int, v []byte) {
 
 func (r *renderer) execute(t *template.Template, name string, data interface{}) (*bytes.Buffer, error) {
 	buf := bufpool.Get()
-	//buf := bufpool.Get().(*bytes.Buffer)
 	return buf, t.ExecuteTemplate(buf, name, data)
 }
 
@@ -290,13 +290,9 @@ func (r *renderer) renderHTML(status int, setName, tplName string, data interfac
 	//}
 	//bufpool.Put(out)
 	//t := r.t[path.Join(setName, tplName)]
-	for key := range r.t {
-		log.Println("key: " + key)
-	}
-	log.Println("Set Name: " + setName + " tplName: " + tplName)
+
 	t := r.t[tplName]
 	buf, err := r.execute(t, tplName, data)
-	//fmt.Println(buf.String())
 	if err != nil {
 		http.Error(r, err.Error(), http.StatusInternalServerError)
 		return
@@ -338,14 +334,6 @@ func (r *renderer) HTMLString(name string, data interface{}, htmlOpt ...macaron.
 	p, err := r.HTMLBytes(name, data, htmlOpt...)
 	return string(p), err
 }
-
-//func (r *renderer) Data(status int, v []byte) {
-//	if r.Header().Get(ContentType) == "" {
-//		r.Header().Set(ContentType, ContentBinary)
-//	}
-//	r.WriteHeader(status)
-//	r.Write(v)
-//}
 
 // Error writes the given HTTP status to the current ResponseWriter
 func (r *renderer) Error(status int, message ...string) {
