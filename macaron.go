@@ -13,8 +13,6 @@ import (
 	"time"
 	"log"
 	"io"
-	"runtime/debug"
-	"path"
 )
 
 const (
@@ -172,6 +170,7 @@ func (r *renderer) JSONString(v interface{}) (string, error) {
 }
 
 func (r *renderer) HTML(status int, name string, binding interface{}, htmlOpt ...macaron.HTMLOptions) {
+	log.Println("HTML: name: " + name)
 	t := r.t[name]
 	buf, err := r.execute(t, name, binding)
 	//fmt.Println(buf.String())
@@ -247,7 +246,6 @@ func (r *renderer) addYield(t *template.Template, tplName string, data interface
 
 func (r *renderer) renderBytes(setName, tplName string, data interface{}, htmlOpt ...macaron.HTMLOptions) (*bytes.Buffer, error) {
 	//t := r.TemplateSet.Get(setName)
-	debug.PrintStack()
 	log.Println(fmt.Sprintf("macaron renderer renderBytes: set name: %s, tplName: %s", setName, tplName))
 	t := r.t[setName]
 	if macaron.Env == macaron.DEV {
@@ -291,7 +289,11 @@ func (r *renderer) renderHTML(status int, setName, tplName string, data interfac
 	//	out.Reset()
 	//}
 	//bufpool.Put(out)
-	t := r.t[path.Join(setName, tplName)]
+	//t := r.t[path.Join(setName, tplName)]
+	for key := range r.t {
+		log.Println("key: " + key)
+	}
+	t := r.t[tplName]
 	buf, err := r.execute(t, tplName, data)
 	//fmt.Println(buf.String())
 	if err != nil {

@@ -62,7 +62,7 @@ func loadTemplates(funcMap template.FuncMap) (map[string]*template.Template, err
 				panic(err)
 			}
 
-			// Now we find all regular template definitions and check for the most recent definiton
+			// Now we find all regular template definitions and check for the most recent definition
 			for _, t := range regularTemplateDefs {
 				found := false
 				defineIdx := 0
@@ -109,9 +109,7 @@ func loadTemplates(funcMap template.FuncMap) (map[string]*template.Template, err
 
 			// Make sure we empty the cache between runs
 			cache = cache[0:0]
-
 			break
-			//return nil
 		}
 		return nil
 	})
