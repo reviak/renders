@@ -5,7 +5,6 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 func generateTemplateName(base, path string) string {
@@ -32,9 +31,9 @@ func file_content(path string) (string, error) {
 	return s, nil
 }
 
-func getExt(s string) string {
-	if strings.Index(s, ".") == -1 {
-		return ""
-	}
-	return "." + strings.Join(strings.Split(s, ".")[1:], ".")
-}
+//func getExt(s string) string {
+//	if strings.Index(s, ".") == -1 {
+//		return ""
+//	}
+//	return "." + strings.Join(strings.Split(s, ".")[1:], ".")
+//}

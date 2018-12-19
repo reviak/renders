@@ -13,6 +13,7 @@ import (
 	"time"
 	"log"
 	"io"
+	"runtime/debug"
 )
 
 const (
@@ -245,6 +246,8 @@ func (r *renderer) addYield(t *template.Template, tplName string, data interface
 
 func (r *renderer) renderBytes(setName, tplName string, data interface{}, htmlOpt ...macaron.HTMLOptions) (*bytes.Buffer, error) {
 	//t := r.TemplateSet.Get(setName)
+	debug.PrintStack()
+	log.Println(fmt.Sprintf("macaron renderer renderBytes: set name: %s, tplName: %s", setName, tplName))
 	t := r.t[setName]
 	if macaron.Env == macaron.DEV {
 		log.Println("macaron renderer renderBytes")
