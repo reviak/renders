@@ -5,17 +5,20 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"html/template"
-	"io"
 	"net/http"
 
+	"fmt"
 	"github.com/oxtoacart/bpool"
 	"gopkg.in/macaron.v1"
+	"time"
+	"log"
 )
 
 const (
 	ContentType    = "Content-Type"
 	ContentLength  = "Content-Length"
 	ContentBinary  = "application/octet-stream"
+	ContentPlain   = "text/plain"
 	ContentJSON    = "application/json"
 	ContentHTML    = "text/html"
 	ContentXHTML   = "application/xhtml+xml"
@@ -23,30 +26,13 @@ const (
 	defaultCharset = "UTF-8"
 )
 
+const (
+	defaultTplSetName = "DEFAULT"
+)
+
 // Provides a temporary buffer to execute templates into and catch errors.
 var bufpool *bpool.BufferPool
 var templates map[string]*template.Template
-
-type Render interface {
-	// JSON writes the given status and JSON serialized version of the given value to the http.ResponseWriter.
-	JSON(status int, v interface{})
-	// HTML renders a html template specified by the name and writes the result and given status to the http.ResponseWriter.
-	HTML(status int, name string, v interface{})
-	// XML writes the given status and XML serialized version of the given value to the http.ResponseWriter.
-	XML(status int, v interface{})
-	// Data writes the raw byte array to the http.ResponseWriter.
-	Data(status int, v []byte)
-	// Error is a convenience function that writes an http status to the http.ResponseWriter.
-	Error(status int)
-	// Status is an alias for Error (writes an http status to the http.ResponseWriter)
-	Status(status int)
-	// Redirect is a convienience function that sends an HTTP redirect. If status is omitted, uses 302 (Found)
-	Redirect(location string, status ...int)
-	// Template returns the internal *template.Template used to render the HTML
-	Template(name string) *template.Template
-	// Header exposes the header struct from http.ResponseWriter.
-	Header() http.Header
-}
 
 // Options is a struct for specifying configuration options for the render.Renderer middleware
 type Options struct {
@@ -79,7 +65,15 @@ func Renderer(options ...Options) macaron.Handler {
 			// recompile for easy development
 			compile(opt)
 		}
-		c.MapTo(&renderer{res, req, templates, opt, cs}, (*Render)(nil))
+		r := &renderer{
+			ResponseWriter:  res,
+			req:             req,
+			t:               templates,
+			opt:             opt,
+			compiledCharset: cs,
+		}
+		c.Render = r // questionable assignment
+		c.MapTo(r, (*macaron.Render)(nil))
 	}
 }
 
@@ -130,6 +124,12 @@ type renderer struct {
 	t               map[string]*template.Template
 	opt             Options
 	compiledCharset string
+
+	startTime time.Time
+}
+
+func (r *renderer) SetResponseWriter(rw http.ResponseWriter) {
+	r.ResponseWriter = rw
 }
 
 func (r *renderer) JSON(status int, v interface{}) {
@@ -154,22 +154,34 @@ func (r *renderer) JSON(status int, v interface{}) {
 	r.Write(result)
 }
 
-func (r *renderer) HTML(status int, name string, binding interface{}) {
-
-	buf, err := r.execute(name, binding)
-	//fmt.Println(buf.String())
-	if err != nil {
-		http.Error(r, err.Error(), http.StatusInternalServerError)
-		return
+func (r *renderer) JSONString(v interface{}) (string, error) {
+	var result []byte
+	var err error
+	if r.opt.IndentJSON {
+		result, err = json.MarshalIndent(v, "", "  ")
+	} else {
+		result, err = json.Marshal(v)
 	}
-
-	// template rendered fine, write out the result
-	r.Header().Set(ContentType, r.opt.HTMLContentType+r.compiledCharset)
-	r.WriteHeader(status)
-	io.Copy(r, buf)
-	bufpool.Put(buf)
-
+	if err != nil {
+		return "", err
+	}
+	return string(result), nil
 }
+
+//func (r *renderer) HTML(status int, name string, binding interface{}) {
+//	buf, err := r.execute(name, binding)
+//	//fmt.Println(buf.String())
+//	if err != nil {
+//		http.Error(r, err.Error(), http.StatusInternalServerError)
+//		return
+//	}
+//
+//	// template rendered fine, write out the result
+//	r.Header().Set(ContentType, r.opt.HTMLContentType+r.compiledCharset)
+//	r.WriteHeader(status)
+//	io.Copy(r, buf)
+//	bufpool.Put(buf)
+//}
 
 func (r *renderer) XML(status int, v interface{}) {
 	var result []byte
@@ -193,21 +205,164 @@ func (r *renderer) XML(status int, v interface{}) {
 	r.Write(result)
 }
 
-func (r *renderer) Data(status int, v []byte) {
+func (r *renderer) data(status int, contentType string, v []byte) {
 	if r.Header().Get(ContentType) == "" {
-		r.Header().Set(ContentType, ContentBinary)
+		r.Header().Set(ContentType, contentType)
 	}
 	r.WriteHeader(status)
 	r.Write(v)
 }
 
-// Error writes the given HTTP status to the current ResponseWriter
-func (r *renderer) Error(status int) {
+func (r *renderer) RawData(status int, v []byte) {
+	r.data(status, ContentBinary, v)
+}
+
+func (r *renderer) PlainText(status int, v []byte) {
+	r.data(status, ContentPlain, v)
+}
+
+func (r *renderer) execute(t *template.Template, name string, data interface{}) (*bytes.Buffer, error) {
+	buf := bufpool.Get()
+	//buf := bufpool.Get().(*bytes.Buffer)
+	return buf, t.ExecuteTemplate(buf, name, data)
+}
+
+func (r *renderer) addYield(t *template.Template, tplName string, data interface{}) {
+	funcs := template.FuncMap{
+		"yield": func() (template.HTML, error) {
+			buf, err := r.execute(t, tplName, data)
+			// return safe html here since we are rendering our own template
+			return template.HTML(buf.String()), err
+		},
+		"current": func() (string, error) {
+			return tplName, nil
+		},
+	}
+	t.Funcs(funcs)
+}
+
+func (r *renderer) renderBytes(setName, tplName string, data interface{}, htmlOpt ...macaron.HTMLOptions) (*bytes.Buffer, error) {
+	//t := r.TemplateSet.Get(setName)
+	t := r.t[setName]
+	if macaron.Env == macaron.DEV {
+		log.Println("macaron renderer renderBytes")
+		//opt := r.opt
+		//opt.Directory = r.TemplateSet.GetDir(setName)
+		//t = r.TemplateSet.Set(setName, &opt)
+	}
+	if t == nil {
+		return nil, fmt.Errorf("html/template: template \"%s\" is undefined", tplName)
+	}
+
+	opt := r.prepareHTMLOptions(htmlOpt)
+
+	if len(opt.Layout) > 0 {
+		r.addYield(t, tplName, data)
+		tplName = opt.Layout
+	}
+
+	out, err := r.execute(t, tplName, data)
+	if err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
+func (r *renderer) renderHTML(status int, setName, tplName string, data interface{}, htmlOpt ...macaron.HTMLOptions) {
+	r.startTime = time.Now()
+
+	out, err := r.renderBytes(setName, tplName, data, htmlOpt...)
+	if err != nil {
+		http.Error(r, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	r.Header().Set(ContentType, r.opt.HTMLContentType+r.compiledCharset)
 	r.WriteHeader(status)
+
+	if _, err := out.WriteTo(r); err != nil {
+		out.Reset()
+	}
+	bufpool.Put(out)
+}
+
+func (r *renderer) HTML(status int, name string, data interface{}, htmlOpt ...macaron.HTMLOptions) {
+	r.renderHTML(status, defaultTplSetName, name, data, htmlOpt...)
+}
+
+func (r *renderer) HTMLSet(status int, setName, tplName string, data interface{}, htmlOpt ...macaron.HTMLOptions) {
+	r.renderHTML(status, setName, tplName, data, htmlOpt...)
+}
+
+func (r *renderer) HTMLSetBytes(setName, tplName string, data interface{}, htmlOpt ...macaron.HTMLOptions) ([]byte, error) {
+	out, err := r.renderBytes(setName, tplName, data, htmlOpt...)
+	if err != nil {
+		return []byte(""), err
+	}
+	return out.Bytes(), nil
+}
+
+func (r *renderer) HTMLBytes(name string, data interface{}, htmlOpt ...macaron.HTMLOptions) ([]byte, error) {
+	return r.HTMLSetBytes(defaultTplSetName, name, data, htmlOpt...)
+}
+
+func (r *renderer) HTMLSetString(setName, tplName string, data interface{}, htmlOpt ...macaron.HTMLOptions) (string, error) {
+	p, err := r.HTMLSetBytes(setName, tplName, data, htmlOpt...)
+	return string(p), err
+}
+
+func (r *renderer) HTMLString(name string, data interface{}, htmlOpt ...macaron.HTMLOptions) (string, error) {
+	p, err := r.HTMLBytes(name, data, htmlOpt...)
+	return string(p), err
+}
+
+//func (r *renderer) Data(status int, v []byte) {
+//	if r.Header().Get(ContentType) == "" {
+//		r.Header().Set(ContentType, ContentBinary)
+//	}
+//	r.WriteHeader(status)
+//	r.Write(v)
+//}
+
+// Error writes the given HTTP status to the current ResponseWriter
+func (r *renderer) Error(status int, message ...string) {
+	r.WriteHeader(status)
+	if len(message) > 0 {
+		r.Write([]byte(message[0]))
+	}
 }
 
 func (r *renderer) Status(status int) {
 	r.WriteHeader(status)
+}
+
+func (r *renderer) prepareHTMLOptions(htmlOpt []macaron.HTMLOptions) macaron.HTMLOptions {
+	if len(htmlOpt) > 0 {
+		return htmlOpt[0]
+	}
+
+	return macaron.HTMLOptions{
+		//Layout: r.opt.Layout,
+	}
+}
+
+func (r *renderer) SetTemplatePath(setName, dir string) {
+	if len(setName) == 0 {
+		setName = defaultTplSetName
+	}
+	//opt := r.opt
+	//opt.Directory = dir
+	//r.TemplateSet.Set(setName, &opt)
+	//r.t[path.Join(dir, setName)]
+	log.Println("Calling SetTemplatePath")
+}
+
+func (r *renderer) HasTemplateSet(name string) bool {
+	//return r.TemplateSet.Get(name) != nil
+	_, ok := r.t[name]
+	return ok
+	//return r.TemplateSet.Get(name) != nil
 }
 
 func (r *renderer) Redirect(location string, status ...int) {
@@ -221,9 +376,4 @@ func (r *renderer) Redirect(location string, status ...int) {
 
 func (r *renderer) Template(name string) *template.Template {
 	return r.t[name]
-}
-
-func (r *renderer) execute(name string, binding interface{}) (*bytes.Buffer, error) {
-	buf := bufpool.Get()
-	return buf, r.t[name].ExecuteTemplate(buf, name, binding)
 }
