@@ -14,6 +14,7 @@ import (
 	"log"
 	"io"
 	"runtime/debug"
+	"path"
 )
 
 const (
@@ -275,21 +276,34 @@ func (r *renderer) renderBytes(setName, tplName string, data interface{}, htmlOp
 }
 
 func (r *renderer) renderHTML(status int, setName, tplName string, data interface{}, htmlOpt ...macaron.HTMLOptions) {
-	r.startTime = time.Now()
-
-	out, err := r.renderBytes(setName, tplName, data, htmlOpt...)
+	//r.startTime = time.Now()
+	//
+	//out, err := r.renderBytes(setName, tplName, data, htmlOpt...)
+	//if err != nil {
+	//	http.Error(r, err.Error(), http.StatusInternalServerError)
+	//	return
+	//}
+	//
+	//r.Header().Set(ContentType, r.opt.HTMLContentType+r.compiledCharset)
+	//r.WriteHeader(status)
+	//
+	//if _, err := out.WriteTo(r); err != nil {
+	//	out.Reset()
+	//}
+	//bufpool.Put(out)
+	t := r.t[path.Join(setName, tplName)]
+	buf, err := r.execute(t, tplName, data)
+	//fmt.Println(buf.String())
 	if err != nil {
 		http.Error(r, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	// template rendered fine, write out the result
 	r.Header().Set(ContentType, r.opt.HTMLContentType+r.compiledCharset)
 	r.WriteHeader(status)
-
-	if _, err := out.WriteTo(r); err != nil {
-		out.Reset()
-	}
-	bufpool.Put(out)
+	io.Copy(r, buf)
+	bufpool.Put(buf)
 }
 
 //func (r *renderer) HTML(status int, name string, data interface{}, htmlOpt ...macaron.HTMLOptions) {
