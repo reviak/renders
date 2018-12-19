@@ -293,6 +293,7 @@ func (r *renderer) renderHTML(status int, setName, tplName string, data interfac
 	for key := range r.t {
 		log.Println("key: " + key)
 	}
+	log.Println("Set Name: " + setName + " tplName: " + tplName)
 	t := r.t[tplName]
 	buf, err := r.execute(t, tplName, data)
 	//fmt.Println(buf.String())
