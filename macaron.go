@@ -12,6 +12,7 @@ import (
 	"gopkg.in/macaron.v1"
 	"time"
 	"log"
+	"io"
 )
 
 const (
@@ -168,20 +169,21 @@ func (r *renderer) JSONString(v interface{}) (string, error) {
 	return string(result), nil
 }
 
-//func (r *renderer) HTML(status int, name string, binding interface{}) {
-//	buf, err := r.execute(name, binding)
-//	//fmt.Println(buf.String())
-//	if err != nil {
-//		http.Error(r, err.Error(), http.StatusInternalServerError)
-//		return
-//	}
-//
-//	// template rendered fine, write out the result
-//	r.Header().Set(ContentType, r.opt.HTMLContentType+r.compiledCharset)
-//	r.WriteHeader(status)
-//	io.Copy(r, buf)
-//	bufpool.Put(buf)
-//}
+func (r *renderer) HTML(status int, name string, binding interface{}, htmlOpt ...macaron.HTMLOptions) {
+	t := r.t[name]
+	buf, err := r.execute(t, name, binding)
+	//fmt.Println(buf.String())
+	if err != nil {
+		http.Error(r, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// template rendered fine, write out the result
+	r.Header().Set(ContentType, r.opt.HTMLContentType+r.compiledCharset)
+	r.WriteHeader(status)
+	io.Copy(r, buf)
+	bufpool.Put(buf)
+}
 
 func (r *renderer) XML(status int, v interface{}) {
 	var result []byte
@@ -287,9 +289,9 @@ func (r *renderer) renderHTML(status int, setName, tplName string, data interfac
 	bufpool.Put(out)
 }
 
-func (r *renderer) HTML(status int, name string, data interface{}, htmlOpt ...macaron.HTMLOptions) {
-	r.renderHTML(status, defaultTplSetName, name, data, htmlOpt...)
-}
+//func (r *renderer) HTML(status int, name string, data interface{}, htmlOpt ...macaron.HTMLOptions) {
+//	r.renderHTML(status, defaultTplSetName, name, data, htmlOpt...)
+//}
 
 func (r *renderer) HTMLSet(status int, setName, tplName string, data interface{}, htmlOpt ...macaron.HTMLOptions) {
 	r.renderHTML(status, setName, tplName, data, htmlOpt...)
